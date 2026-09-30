@@ -1,5 +1,8 @@
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import dbConnect from '@/lib/db';
+import Course from '@/models/Course';
+import '@/models/Trainer';
 import CourseDetailClient from './CourseDetailClient';
 
 interface Props {
@@ -8,13 +11,11 @@ interface Props {
 
 async function getCourse(slug: string) {
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const res = await fetch(`${baseUrl}/api/courses/${slug}`, {
-      next: { revalidate: 60, tags: ['courses', `course-${slug}`] }
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.course;
+    await dbConnect();
+    const course = await Course.findOne({ slug, status: 'published' })
+      .populate('trainers', 'name photo designation bio experience skills linkedin github portfolio')
+      .lean();
+    return course;
   } catch {
     return null;
   }
@@ -25,13 +26,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const course = await getCourse(slug);
   if (!course) return { title: 'Course Not Found' };
   return {
-    title: course.seoTitle || course.name,
-    description: course.seoDescription || course.shortDescription,
-    keywords: course.seoKeywords || course.technologies,
+    title: (course as Record<string, unknown>).seoTitle as string || (course as Record<string, unknown>).name as string,
+    description: (course as Record<string, unknown>).seoDescription as string || (course as Record<string, unknown>).shortDescription as string,
+    keywords: (course as Record<string, unknown>).seoKeywords as string[] || (course as Record<string, unknown>).technologies as string[],
     openGraph: {
-      title: course.name,
-      description: course.shortDescription,
-      images: course.heroImage || course.thumbnail ? [{ url: course.heroImage || course.thumbnail }] : [],
+      title: (course as Record<string, unknown>).name as string,
+      description: (course as Record<string, unknown>).shortDescription as string,
+      images: ((course as Record<string, unknown>).heroImage || (course as Record<string, unknown>).thumbnail) 
+        ? [{ url: ((course as Record<string, unknown>).heroImage || (course as Record<string, unknown>).thumbnail) as string }] 
+        : [],
     },
   };
 }
@@ -40,5 +43,7 @@ export default async function CourseDetailPage({ params }: Props) {
   const { slug } = await params;
   const course = await getCourse(slug);
   if (!course) notFound();
-  return <CourseDetailClient course={course} />;
+  // Serialize the lean Mongoose document to a plain object for the client
+  const plainCourse = JSON.parse(JSON.stringify(course));
+  return <CourseDetailClient course={plainCourse} />;
 }
